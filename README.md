@@ -66,11 +66,11 @@ Install ALB Ingress Controller
     ServiceAccount name "alb-ingress-controller"
     (within k8's we are creating this clusterrole so this clusterrole will be attached to serviceaccount using clusterrolebinding)
 ---------------------------------------------------------------------------------------------------------------------------------
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/master/docs/examples/rbac-role.yaml
+k apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/master/docs/examples/rbac-role.yaml
 
 List Service Accounts
 -----------------------
-kubectl get sa -n kube-system
+k get sa -n kube-system
 
 
 
@@ -193,7 +193,7 @@ k describe sa alb-ingress-controller -n kube-system
 
 To deploy alb-ingress-controller
 --------------------------------
-kubectl apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/master/docs/examples/alb-ingress-controller.yaml
+k apply -f https://raw.githubusercontent.com/kubernetes-sigs/aws-alb-ingress-controller/master/docs/examples/alb-ingress-controller.yaml
 
 
 Verify Deployment
@@ -230,5 +230,163 @@ Verify our ALB Ingress Controller is running
 # Verify if alb-ingress-controller pod is running
 k get pods -n kube-system
 
+
+
+
+
+
+##Deploying springboot application with ALB-Ingress-controller
+--------------------------------------------------------------
+vi deployment.yml
+-----------------
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: springboot-deployment
+  labels:
+    app: springboot
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 25%
+      maxSurge: 1
+  selector:
+    matchLabels:
+      app: springboot
+  template:
+    metadata:
+      labels:
+        app: springboot
+    spec:
+      containers:
+      - name: springboot-deployment
+        image: sarath750/springboot-hello:v1
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+
+k apply -f deployment.yml
+
+k get nodes
+
+k get pods
+
+
+vi service.yml
+--------------
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: springboot-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: springboot
+  ports:
+    - protocol: TCP
+      port: 8080
+      targetPort: 8080
+
+k apply -f servie.yml
+
+get the DNS name from load-balancer 
+<DNS name:8080>
+
+
+
+vi ingress.yml
+--------------
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: springboot-ingress
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+spec:
+  rules:
+  - http:
+      paths:
+      - path: /
+        backend:
+          serviceName: springboot-service
+          servicePort:  8080
+
+k apply -f ingress.yml
+
+k get ingress
+(address not present in the ingress so we need to go and check inside the alb-ingress-controller pod)
+
+
+k get pods -n kube-system
+
+k logs <alb-ingress-controller pod name> -n kube-system
+( Subnets must contains these tags: 'kubernetes.io/cluster/eksdemo': ['shared' or 'owned'] and 'kubernetes.io/role/elb':)
+--> add these tags only to public subnets inside vpc--> subnets --> <eksctl-eksdemo-cluster/SubnetPublicUSEAST1F> --> managetags (kubernetes.io/cluster/eksdemo/owned)
+
+ALB Ingress Controller will create ALB. It can be seen in "LoadBalancer" section. the ingress will be running with the 80 Portnumber.
+
+<ALB DNS Name>:80  (browse)
+Now we are able to see the output of the application at the ALB level, but if we want to see the out of the application at DNS level Route53 comes into picture.
+
+
+
+Route53
+-------
+If any user's request from outside needs to communicate with our deployed application in k8's, Route53 helps the user to connect the user request with our deployed application in k8's. 
+Amazon Route 53 is a highly available and scalable Domain Name System (DNS) web service. Route 53 connects user requests to internet applications running on AWS or on-premises.
+
+create hosted-zone and place nameservers in our created domain. so Route53 can communicate with our domain.
+
+create recordname with A name record in this hosted-zone, so it can communicate with our application through ALB.
+
+
+ Create a hosted zone in route53 with the domainname(domain which is purchased in godaddy). once this hosted zone is created it will provide nameservers. place this 4 nameservers inside our domain in godaddy.
+
+when this 4 nameservers are placed in our domain created in godaddy, then route53 can communicate with our domain.
+
+Communicating with our deployed application
+-------------------------------------------
+inside that created hosted zone, create a record name(springboot) in route53. this created record will be communicating with our application through ALB.
+
+user's request(DNS)
+-------------------
+springboot.awstrainer.com 
+
+output of our application
+-------------------------
+Greetings from Springboot..!!! 
+
+recordname - springboot
+domain - awstrainer.com
+
+
+Now we are able to see the output of the application at the DNS level.
+
+
+
+our URL springboot.awstrainer.com is not secure(80 PN), we need to make it secure(443 PN). 
+
+Certificate Manager
+-------------------
+open certificate manager service in aws and create a certificate by providing full domain name.
+
+create a record with c name record in route53.
+
+http(80) --> https(443)
+
+add other annotations as well inside ingress.yml file.
+ssl-redirect annotation: it will redirect from 8080 to 443.
+hostname annotation: <springboot.awstrainer.com>
+certificate arn annotation: <keep certificate arn>
+
+Now our DNS is secured.
+unsecured --> secured
+http(80) --> https(443)
 
 
